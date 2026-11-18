@@ -1,0 +1,28 @@
+# Credentials and private runtime configuration
+.env
+.env.*
+!.env.example
+config/agent_profile.json
+# XML/client stores, runtime output, and private notes
+*.xml
+memory/
+data/
+logs/
+.private-backups/
+private_backups/
+dailyworklog.md
+PROJECT_STATUS.md
+# Local environments and build/editor artifacts
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+*.swp
+*.swo
+*.swn
+*~
+.DS_Store
+*.zip
+*.tar
+*.tar.gz
+*.tgz

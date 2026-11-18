@@ -1,0 +1,22 @@
+{
+  "agent_name": "",
+  "company_name": "",
+  "preferred_language": "English",
+  "email_signature": "Best,\nYour real estate agent",
+  "writing_tone": [
+    "warm",
+    "professional",
+    "natural"
+  ],
+  "preferred_email_length": "short",
+  "greeting_style": "Use a simple greeting such as Hi {client_first_name},",
+  "closing_style": "Use a warm, simple closing.",
+  "communication_principles": [
+    "Be helpful and sincere.",
+    "Do not invent client facts."
+  ],
+  "avoid": [
+    "pushy sales language",
+    "claims or details not supported by client data"
+  ]
+}
