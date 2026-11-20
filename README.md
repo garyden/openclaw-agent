@@ -15,34 +15,63 @@ python3.13 -m venv .venv
 .venv/bin/python -B run_safe_tests.py
 ```
 
-No application has been started as part of the snapshot preparation. Dependency
-installation and live bot operation are separate deliberate operator actions.
-Before any live use, create local configuration from .env.example. Existing shell
-variables take precedence. Owner AND chat allowlists are required. The optional
-config/agent_profile.example.json is generic; its private runtime copy belongs at
-config/agent_profile.json and is ignored. Never commit real configuration or data.
+## Run development and production separately
 
-## Data isolation and operational limitations
+| Environment | CRM XML | Configuration |
+| --- | --- | --- |
+| `development` (default) | Ignored `memory/development.xml` in each checkout. Set `CRM_MEMORY_PATH` to override it with a development-only store. | Copy `.env.example` to ignored `.env.development` in each checkout. Existing process variables take precedence. |
+| `testing` | A per-process temporary directory by default. Explicit test paths must resolve under the system temporary directory and outside Git checkouts. | The safe runner clears inherited credentials, sets `APP_ENV=testing`, and uses synthetic fixtures and mocked services. |
+| `production` | Explicit absolute `CRM_MEMORY_PATH` to an existing, readable and writable regular XML file with a `<memory>` root, outside every Git checkout. The containing directory must support atomic writes. | Set `APP_ENV=production` and supply credentials in the Mac mini service environment. Production does not load dotenv files. |
 
-Default XML paths are based on the location of these exported modules and point
-to this snapshot's own memory/memory.xml. No original production path or data is
-copied. The safe test runner blocks its .env/XML stores and network access; tests
-use temporary XML and mocked services.
+Keep development credentials on the MacBook and Mac mini separate from the Mac
+mini production service credentials. Give the production service a dedicated
+account and keep its data and secrets in private locations accessible to that
+account. Each Telegram bot instance needs its own token if it runs at the same
+time. Configure both owner and chat allowlists for each instance. Run
+`.venv/bin/python -B bot.py` from the intended checkout once its environment is
+configured. Keep the process environment fixed for the lifetime of the bot.
 
-Development/testing/production environment selection is NOT implemented. Default
-CRM and legacy property memory share one XML path per checkout. Safe tests are
-isolated, but arbitrary manual scripts or another bot process can use that same
-checkout-local file. Do not place production data in a development checkout, use
-symlinks to production stores, or run more than one process against a store. A
-separate reviewed configuration change is required for enforced environment/data
-root separation. This snapshot does not claim that production isolation is complete.
+All CRM commands and legacy property and memory commands share the selected
+store. Relative `CRM_MEMORY_PATH` overrides in development and testing resolve
+from the checkout. Production rejects missing, malformed, inaccessible, and
+checkout-local files before Telegram initialization. It validates symlink
+targets and rejects hard-linked production files. Startup leaves existing
+production XML untouched. Authorized edits use atomic replacement.
+
+Development and testing can generate drafts, while SMTP delivery is available
+only in production. Production still requires an authorized owner to issue
+`/confirm_send_email` for a pending sendable draft.
+
+## Migrate an existing production store
+
+1. Schedule downtime and stop the existing production bot and any other writer.
+2. As the operator, make a private backup outside Git, then copy the existing XML
+   to a dedicated private directory outside all checkouts on the Mac mini. Use a
+   regular file, set the production service as owner, and restrict directory and
+   file permissions (for example, `0700` and `0600`).
+3. As the production service account, verify the source and destination checksums
+   match and validate the destination with `app_config.read_settings()` in the
+   service environment before starting the bot. Keep credential values and XML
+   contents out of terminal output, logs, and Git.
+4. Start only the production instance and verify an authorized read-only CRM
+   command. Keep the backup private. If rollback is needed, stop the service
+   first and preserve the current store before restoring. Account for any CRM
+   changes made after cutover.
+
+## Operational limits
+
+Use one bot process per XML store. Atomic writes prevent partial files, while
+multiple writers can still overwrite one another’s changes. Explicit path
+overrides rely on operator configuration and filesystem permissions, so keep
+production files inaccessible to development accounts. Legacy `.env` and
+`memory/memory.xml` are no longer automatic defaults. The optional private
+`config/agent_profile.json` is ignored and can be based on the generic example.
 
 The safe suite intentionally excludes test_fetch.py: importing that module can
 fetch market data and write a cache. Do not use unrestricted test discovery.
 Market CSV/raw caches are omitted; market analysis may need a deliberate data
 setup/fetch before live use. No live API compatibility was checked during export.
-Legacy property deletion still acts immediately for authorized users; no new
-safety policy or production data migration was introduced by this export.
+Legacy property deletion still acts immediately for authorized users.
 
 See NATURAL_CRM_MVP.md, NATURAL_CRM_MVP2.md, NATURAL_EMAIL_DRAFT_MVP3_1.md, and
 VOICE_DRAFT_DIAGNOSTICS.md for feature scope and operator-only retest instructions.

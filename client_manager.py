@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import os
 import re
-import tempfile
 import xml.etree.ElementTree as ET
 from difflib import get_close_matches
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_XML_PATH = os.path.join(BASE_DIR, "memory", "memory.xml")
+from app_config import read_app_env, resolve_memory_path, validate_production_memory
+from crm_storage import write_memory
 
 VALID_STATUSES = {
     "new_lead",
@@ -140,9 +138,11 @@ class ClientManager:
     - easy text parsing for Telegram-style input
     """
 
-    def __init__(self, xml_path: str = DEFAULT_XML_PATH) -> None:
-        self.xml_path = xml_path
-        self._ensure_memory_file()
+    def __init__(self, xml_path: str | Path | None = None) -> None:
+        self._production = read_app_env() == 'production'
+        self.xml_path = str(resolve_memory_path(explicit_path=xml_path))
+        if not self._production:
+            self._ensure_memory_file()
 
     # ============================================================
     # Public structured API
@@ -417,17 +417,15 @@ class ClientManager:
     # ============================================================
 
     def _ensure_memory_file(self) -> None:
-        parent = os.path.dirname(os.path.abspath(self.xml_path))
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-
-        if not os.path.exists(self.xml_path):
+        path = Path(self.xml_path)
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
             root = ET.Element("memory")
             ET.SubElement(root, "properties")
             ET.SubElement(root, "towns")
             ET.SubElement(root, "clients")
-            self._save_tree(ET.ElementTree(root))
-            return
+            if write_memory(path, self._serialize_root(root), create=True):
+                return
 
         try:
             tree = ET.parse(self.xml_path)
@@ -449,6 +447,8 @@ class ClientManager:
             raise ValueError(f"Invalid XML file: {self.xml_path}") from exc
 
     def _load_root(self) -> ET.Element:
+        if self._production:
+            validate_production_memory(Path(self.xml_path))
         tree = ET.parse(self.xml_path)
         return tree.getroot()
 
@@ -457,14 +457,12 @@ class ClientManager:
         self._save_tree(tree)
 
     def _save_tree(self, tree: ET.ElementTree) -> None:
-        self._indent_xml(tree.getroot())
-        directory = os.path.dirname(os.path.abspath(self.xml_path)) or "."
-        with tempfile.NamedTemporaryFile("wb", delete=False, dir=directory) as temp_file:
-            temp_path = temp_file.name
-            tree.write(temp_file, encoding="utf-8", xml_declaration=True)
-            temp_file.write(b"\n")
+        write_memory(Path(self.xml_path), self._serialize_root(tree.getroot()),
+                     production=self._production)
 
-        os.replace(temp_path, self.xml_path)
+    def _serialize_root(self, root: ET.Element) -> bytes:
+        self._indent_xml(root)
+        return ET.tostring(root, encoding="utf-8", xml_declaration=True) + b"\n"
 
     def _get_or_create_clients_node(self, root: ET.Element) -> ET.Element:
         clients_node = root.find("clients")

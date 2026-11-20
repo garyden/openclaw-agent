@@ -142,7 +142,25 @@ class BotEmailDraftTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(update.message.replies, ["No pending email draft."])
 
-    async def test_send_last_email_requires_client_email(self):
+    async def test_confirm_send_email_is_disabled_in_testing(self):
+        update = FakeUpdate("/confirm_send_email", user_id=456)
+        pending_email_drafts[456] = {
+            "client_name": "Synthetic Client",
+            "draft": {"subject": "Synthetic subject", "body": "Synthetic body"},
+        }
+        with (
+            patch("bot.read_app_env", return_value="testing"),
+            patch("bot.crm") as crm,
+            patch("bot.send_email") as sender,
+        ):
+            await confirm_send_email_command(update, None)
+        crm.get_client.assert_not_called()
+        sender.assert_not_called()
+        self.assertIn(456, pending_email_drafts)
+        self.assertEqual(update.message.replies, ["Email sending is disabled outside production."])
+
+    @patch("bot.read_app_env", return_value="production")
+    async def test_send_last_email_requires_client_email(self, app_env):
         update = FakeUpdate("/send_last_email", user_id=456)
         pending_email_drafts[456] = {
             "client_name": "Grace Hopper",
@@ -198,7 +216,8 @@ class BotEmailDraftTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(update.message.replies, ["No pending email draft."])
 
-    async def test_confirm_send_email_sends_and_clears_pending_draft(self):
+    @patch("bot.read_app_env", return_value="production")
+    async def test_confirm_send_email_sends_and_clears_pending_draft(self, app_env):
         update = FakeUpdate("/confirm_send_email", user_id=456)
         pending_email_drafts[456] = {
             "client_name": "Grace Hopper",
@@ -225,7 +244,8 @@ class BotEmailDraftTest(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(456, pending_email_drafts)
         self.assertEqual(update.message.replies, ["Email sent successfully."])
 
-    async def test_confirm_send_email_keeps_pending_draft_when_send_fails(self):
+    @patch("bot.read_app_env", return_value="production")
+    async def test_confirm_send_email_keeps_pending_draft_when_send_fails(self, app_env):
         update = FakeUpdate("/confirm_send_email", user_id=456)
         pending_email_drafts[456] = {
             "client_name": "Grace Hopper",

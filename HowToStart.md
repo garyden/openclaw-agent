@@ -1,9 +1,10 @@
 # Local setup
 
 See README.md for Python setup, configuration, offline tests, and data-isolation limits.
-Use a dedicated virtual environment and copy .env.example to a local .env only
-when deliberately configuring this independent source snapshot. Never copy an
-existing production .env or XML store into it for development or tests.
+Use a dedicated virtual environment and copy `.env.example` to `.env.development`
+when deliberately configuring a development bot. Use development credentials
+and synthetic CRM data. Configure the Mac mini production service separately
+as described in README.md.
 
 ## Batch import
 

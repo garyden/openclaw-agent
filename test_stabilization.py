@@ -115,7 +115,7 @@ class StartupTest(unittest.TestCase):
 import socket
 from unittest.mock import patch
 import client_manager, openai, smtplib, dotenv
-with patch.object(dotenv, "load_dotenv", side_effect=AssertionError("dotenv loaded during import")), \
+with patch.object(dotenv, "dotenv_values", side_effect=AssertionError("dotenv loaded during import")), \
      patch.object(client_manager.ClientManager, '__init__', side_effect=AssertionError('CRM initialized')), \\
      patch.object(openai, 'OpenAI', side_effect=AssertionError('OpenAI initialized')), \\
      patch.object(smtplib, 'SMTP', side_effect=AssertionError('SMTP initialized')), \\
@@ -131,14 +131,14 @@ with patch.object(dotenv, "load_dotenv", side_effect=AssertionError("dotenv load
 
     def test_runtime_only_uses_injected_temporary_crm(self):
         import bot
-        from client_manager import ClientManager
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'memory.xml'
-            with (patch('bot.load_settings', return_value=read_settings(ENV)),
-                  patch('bot.ClientManager', side_effect=lambda: ClientManager(str(path))),
+            env = {**ENV, 'APP_ENV': 'testing', 'CRM_MEMORY_PATH': str(path)}
+            with (patch.dict(os.environ, env, clear=True),
+                  patch('bot.load_settings', side_effect=read_settings),
                   patch.object(bot, 'crm'), patch.object(bot, 'TOKEN')):
                 bot.initialize_runtime()
-                self.assertEqual(bot.crm.xml_path, str(path))
+                self.assertEqual(bot.crm.xml_path, str(path.resolve()))
                 self.assertEqual(bot.crm.list_clients(), [])
 
     def test_invalid_startup_does_not_initialize_crm_or_telegram(self):

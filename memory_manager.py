@@ -1,83 +1,62 @@
-import os
 import re
+import xml.etree.ElementTree as ET
+
+from app_config import read_app_env, resolve_memory_path
+from client_manager import ClientManager
+from crm_storage import write_memory
 from utils import xml_escape
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MEMORY_FILE = os.path.join(BASE_DIR, "memory", "memory.xml")
+
+def _load_memory():
+    production = read_app_env() == 'production'
+    path = resolve_memory_path()
+    if not production and not path.exists():
+        ClientManager(path)
+
+    content = path.read_text(encoding='utf-8')
+    root = ET.fromstring(content, parser=ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
+    if root.tag != 'memory':
+        raise ValueError("Root tag must be <memory>")
+
+    # Legacy commands expect explicit opening and closing tags for these sections.
+    # Prepare them in memory, so reads do not migrate or rewrite an existing file.
+    if any(f'<{tag}>' not in content for tag in ('facts', 'preferences', 'history', 'properties')):
+        if root.find('user') is None:
+            user = ET.SubElement(root, 'user')
+            ET.SubElement(user, 'name')
+            ET.SubElement(user, 'language').text = 'zh'
+        for tag in ('facts', 'preferences', 'history', 'properties'):
+            if root.find(tag) is None:
+                ET.SubElement(root, tag)
+        content = ET.tostring(root, encoding='unicode', short_empty_elements=False)
+    return path, production, content
+
+
+def _save_memory(path, production, content):
+    ET.fromstring(content)
+    write_memory(path, content.encode('utf-8'), production=production)
+
 
 def ensure_memory_file():
-    os.makedirs(os.path.dirname(MEMORY_FILE), exist_ok=True)
+    _load_memory()
 
-    if not os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-            f.write("""<memory>
-    <user>
-        <name></name>
-        <language>zh</language>
-    </user>
-    <facts>
-    </facts>
-    <preferences>
-    </preferences>
-    <history>
-    </history>
-    <properties>
-    </properties>
-</memory>""")
-        return
-
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    changed = False
-
-    if "<facts>" not in content:
-        content = content.replace("</user>", "</user>\n    <facts>\n    </facts>")
-        changed = True
-
-    if "<preferences>" not in content:
-        content = content.replace("</facts>", "</facts>\n    <preferences>\n    </preferences>")
-        changed = True
-
-    if "<history>" not in content:
-        content = content.replace("</preferences>", "</preferences>\n    <history>\n    </history>")
-        changed = True
-
-    if "<properties>" not in content:
-        content = content.replace("</history>", "</history>\n    <properties>\n    </properties>")
-        changed = True
-
-    if changed:
-        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-            f.write(content)
 
 def load_memory():
-    ensure_memory_file()
-    if not os.path.exists(MEMORY_FILE):
-        return ""
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        return f.read()
+    return _load_memory()[2]
+
 
 def append_fact(text):
-    ensure_memory_file()
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
+    path, production, content = _load_memory()
+    new_fact = f"        <fact>{xml_escape(text)}</fact>\n"
+    content = content.replace("</facts>", new_fact + "    </facts>", 1)
+    _save_memory(path, production, content)
 
-    new_fact = f"        <fact>{text}</fact>\n"
-    if "</facts>" in content:
-        content = content.replace("</facts>", new_fact + "    </facts>")
-
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
 
 def delete_property(address):
-    ensure_memory_file()
-
     if not address or not address.strip():
         return False, "没有提供房产地址。"
 
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
+    path, production, content = _load_memory()
 
     properties_match = re.search(r"<properties>(.*?)</properties>", content, re.DOTALL)
     if not properties_match:
@@ -139,22 +118,18 @@ def delete_property(address):
         flags=re.DOTALL
     )
 
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
+    _save_memory(path, production, content)
 
     return True, f"已删除房产：{matched_address}"
 
 def append_preference(text):
-    ensure_memory_file()
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
+    path, production, content = _load_memory()
 
-    new_pref = f"        <preference>{text}</preference>\n"
+    new_pref = f"        <preference>{xml_escape(text)}</preference>\n"
     if "</preferences>" in content:
         content = content.replace("</preferences>", new_pref + "    </preferences>")
 
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
+    _save_memory(path, production, content)
 
 def append_property(
     address,
@@ -180,14 +155,10 @@ def append_property(
     grade="",
     decision="",
 ):
-    ensure_memory_file()
-
     address_key = " ".join((address or "").lower().strip().split())
-    if property_exists(address_key):
+    path, production, content = _load_memory()
+    if _property_exists(content, address_key):
         return False
-
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
 
     new_property = f"""        <property>
             <address>{xml_escape(address_key) or 'unknown'}</address>
@@ -219,14 +190,12 @@ def append_property(
     if insert_pos != -1:
         content = content[:insert_pos] + new_property + content[insert_pos:]
 
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
+    _save_memory(path, production, content)
 
     return True
 
 def summarize_properties():
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
+    content = load_memory()
 
     property_blocks = re.findall(r"<property>(.*?)</property>", content, re.DOTALL)
 
@@ -277,12 +246,10 @@ def summarize_properties():
     return "这是你之前看过的房子：\n\n" + "\n\n".join(lines)
 
 def property_exists(address):
-    if not address:
-        return False
+    return bool(address) and _property_exists(load_memory(), address)
 
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
 
+def _property_exists(content, address):
     addresses = re.findall(r"<address>(.*?)</address>", content, re.DOTALL)
     normalized_input = address.strip().lower()
 
@@ -293,10 +260,7 @@ def property_exists(address):
     return False
 
 def clear_all_properties():
-    ensure_memory_file()
-
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
+    path, production, content = _load_memory()
 
     content = re.sub(
         r"<properties>.*?</properties>",
@@ -305,15 +269,12 @@ def clear_all_properties():
         flags=re.DOTALL
     )
 
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
+    _save_memory(path, production, content)
 
     return "已清空所有房产记录。"
 
 def load_properties():
-    ensure_memory_file()
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
+    content = load_memory()
 
     property_blocks = re.findall(r"<property>(.*?)</property>", content, re.DOTALL)
 
@@ -352,30 +313,7 @@ def load_properties():
     return properties
 
 def append_memory_event(text):
-    ensure_memory_file()
-    os.makedirs(os.path.dirname(MEMORY_FILE), exist_ok=True)
-
-    ensure_memory_file()
-
-    if not os.path.exists(MEMORY_FILE):
-        with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-            f.write("""<memory>
-    <user>
-        <name></name>
-        <language>zh</language>
-    </user>
-    <history>
-    </history>
-</memory>""")
-
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    new_event = f"        <event>{text}</event>\n"
-    if "</history>" in content:
-        content = content.replace("</history>", new_event + "    </history>")
-    else:
-        content = content.replace("</memory>", f"    <history>\n{new_event}    </history>\n</memory>")
-
-    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
-        f.write(content)
+    path, production, content = _load_memory()
+    new_event = f"        <event>{xml_escape(text)}</event>\n"
+    content = content.replace("</history>", new_event + "    </history>", 1)
+    _save_memory(path, production, content)

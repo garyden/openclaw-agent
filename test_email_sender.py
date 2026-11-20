@@ -6,6 +6,7 @@ from email_sender import send_email
 
 
 EMAIL_ENV = {
+    "APP_ENV": "production",
     "EMAIL_HOST": "smtp.example.com",
     "EMAIL_PORT": "587",
     "EMAIL_USER": "agent@example.com",
@@ -36,7 +37,7 @@ class EmailSenderTest(unittest.TestCase):
         self.assertEqual(message.get_content(), "The showing is scheduled for this weekend.\n")
 
     def test_send_email_requires_config(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, {"APP_ENV": "production"}, clear=True):
             with self.assertRaisesRegex(ValueError, "EMAIL_HOST is not set"):
                 send_email("client@example.com", "Subject", "Body")
 

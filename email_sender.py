@@ -2,8 +2,13 @@ import os
 import smtplib
 from email.message import EmailMessage
 
+from app_config import read_app_env
+
 
 def send_email(to: str, subject: str, body: str) -> None:
+    if read_app_env() != "production":
+        raise ValueError("Email sending is disabled outside production.")
+
     recipient = (to or "").strip()
     if not recipient:
         raise ValueError("Email recipient is required.")

@@ -13,7 +13,7 @@ from datetime import date, datetime, time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from openai import OpenAI
 
-from app_config import load_settings, ConfigurationError
+from app_config import load_settings, read_app_env, ConfigurationError
 from authorization import owner_only, allowed_chat
 from natural_crm import NaturalCRM, parse_request as parse_crm_request
 from ai_parser import parse_user_intent
@@ -74,8 +74,8 @@ def get_openai_client():
 def initialize_runtime():
     global TOKEN, crm
     settings = load_settings()
+    crm = ClientManager(settings.crm_memory_path)
     TOKEN = settings.token
-    crm = ClientManager()
     return settings
 
 pending_email_drafts = {}
@@ -677,6 +677,10 @@ async def confirm_send_email_command(update: Update, context: ContextTypes.DEFAU
 
     if draft is None:
         await update.message.reply_text("No pending email draft.")
+        return
+
+    if read_app_env() != "production":
+        await update.message.reply_text("Email sending is disabled outside production.")
         return
 
     client_name = get_pending_email_client_name(pending_record)
