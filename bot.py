@@ -7,7 +7,10 @@ import os
 import re
 import json
 import tempfile
-from crm_logging import configure_logging, log_event, log_telegram_error, log_draft_diagnostic
+from crm_logging import (
+    configure_logging, log_event, log_telegram_error, log_draft_diagnostic,
+    log_lifecycle_failure,
+)
 from voice_draft_diagnostics import VoiceDraftDiagnostics, analyze_synthetic_transcript
 from datetime import date, datetime, time
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -1804,6 +1807,13 @@ async def telegram_initialized(application):
 
 
 def main():
+    stage = "runtime_setup"
+
+    async def after_initialize(application):
+        nonlocal stage
+        stage = "polling_after_init"
+        await telegram_initialized(application)
+
     configure_logging()
     log_event("startup")
     try:
@@ -1813,7 +1823,7 @@ def main():
             raise ValueError("TELEGRAM_BOT_TOKEN is not set")
 
         builder = ApplicationBuilder().token(TOKEN)
-        builder.post_init(telegram_initialized)
+        builder.post_init(after_initialize)
         app = builder.build()
         app.add_error_handler(handle_application_error)
 
@@ -1844,10 +1854,12 @@ def main():
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, owner_only(handle_message)))
 
         register_automatic_daily_brief(app)
+        stage = "polling_before_init"
         log_event("polling_started")
         app.run_polling()
     except Exception as exc:
         log_telegram_error(exc, fallback="runtime_failed")
+        log_lifecycle_failure(stage, exc)
         raise
     finally:
         log_event("shutdown")

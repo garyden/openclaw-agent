@@ -1,6 +1,9 @@
 """Console events with a closed vocabulary: never format request/provider data."""
 import logging
-from telegram.error import TelegramError, InvalidToken, Conflict, NetworkError, BadRequest
+from telegram.error import (
+    TelegramError, InvalidToken, Conflict, NetworkError, BadRequest, TimedOut, Forbidden,
+)
+from app_config import ConfigurationError
 
 COMMANDS = frozenset({
     'diagnose_voice_draft', 'start', 'help', 'tour', 'cancel_tour', 'add_client', 'list_clients',
@@ -40,7 +43,17 @@ EVENTS = {
     'command_completed': (logging.INFO, 'Command completed'),
     'request_failed': (logging.ERROR, 'Request failed; details suppressed'),
     'runtime_failed': (logging.ERROR, 'Startup or polling failed; details suppressed'),
+    'lifecycle_failure': (logging.ERROR, 'Lifecycle failure'),
 }
+
+LIFECYCLE_STAGES = frozenset({'runtime_setup', 'polling_before_init', 'polling_after_init'})
+EXCEPTION_CLASSES = {
+    cls: cls.__name__ for cls in (
+        ConfigurationError, RuntimeError, ValueError, TypeError, AttributeError,
+        OSError, InvalidToken, Conflict, NetworkError, BadRequest, TimedOut, Forbidden,
+    )
+}
+EXCEPTION_LABELS = frozenset(EXCEPTION_CLASSES.values()) | {'Other'}
 
 
 DIAGNOSTIC_VALUES = {
@@ -82,6 +95,16 @@ class SafeEventFormatter(logging.Formatter):
         if event and record.msg == 'draft_diagnostic':
             safe = safe_draft_diagnostic(getattr(record, 'diagnostic', None))
             message += ' ' + ' '.join(f'{key}={value}' for key, value in safe.items())
+        if event and record.msg == 'lifecycle_failure':
+            stage = getattr(record, 'stage', None)
+            exception_class = getattr(record, 'exception_class', None)
+            if type(stage) is str and stage in LIFECYCLE_STAGES:
+                message += f' stage={stage}'
+            if type(exception_class) is str and exception_class in EXCEPTION_LABELS:
+                message += f' exception={exception_class}'
+            context_class = getattr(record, 'context_class', None)
+            if type(context_class) is str and context_class in EXCEPTION_LABELS:
+                message += f' context={context_class}'
         return f'{logging.getLevelName(level)} {message}'
 
 
@@ -109,6 +132,15 @@ def log_event(event, command=None):
     safe_command = command if type(command) is str and command in COMMANDS else None
     logging.getLogger('bot').log(EVENTS[event][0], event,
                                extra={'command': safe_command})
+
+
+def log_lifecycle_failure(stage, error):
+    context = error.__context__
+    logging.getLogger('bot').error('lifecycle_failure', extra={
+        'stage': stage,
+        'exception_class': EXCEPTION_CLASSES.get(type(error), 'Other'),
+        'context_class': EXCEPTION_CLASSES.get(type(context), 'Other') if context is not None else None,
+    })
 
 
 def classify_telegram_error(error):

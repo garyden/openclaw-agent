@@ -1,4 +1,5 @@
 """Offline logging tests using synthetic payloads, temporary XML, and mocked polling."""
+import asyncio
 import io
 import logging
 import os
@@ -7,12 +8,17 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+from telegram.error import Conflict
 
 from authorization import owner_only
 from crm_logging import configure_logging, log_event, SafeEventFormatter, classify_telegram_error
 
 ENV = {'TELEGRAM_OWNER_IDS': '7', 'TELEGRAM_ALLOWED_CHAT_IDS': '7'}
-PRIVATE = 'Private Customer private@example.com +15551234567 transcript secret-token'
+PRIVATE = (
+    'Private Customer private@example.com +15551234567 transcript secret-token '
+    'https://api.telegram.org/bot123456:fake-token/getUpdates -100987654321 '
+    '<memory>synthetic CRM</memory> EMAIL_PASSWORD=fake-password'
+)
 
 
 class LoggingTest(unittest.IsolatedAsyncioTestCase):
@@ -129,7 +135,39 @@ class LoggingTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.stream.getvalue(),
                          'INFO CRM bot starting\nINFO Polling starting\n'
                          'ERROR Startup or polling failed; details suppressed\n'
+                         'ERROR Lifecycle failure stage=polling_before_init exception=RuntimeError\n'
                          'INFO CRM bot stopped\n')
+
+    def test_failure_after_initialization_logs_only_allowlisted_labels(self):
+        import bot
+
+        unknown_error = type('SensitiveSyntheticClassName', (Exception,), {})
+        app = MagicMock()
+        builder = MagicMock()
+        builder.token.return_value.build.return_value = app
+
+        def run_polling():
+            callback = builder.token.return_value.post_init.call_args.args[0]
+            asyncio.run(callback(app))
+            try:
+                raise Conflict(PRIVATE)
+            except Conflict:
+                raise unknown_error(PRIVATE)
+
+        app.run_polling.side_effect = run_polling
+        with (patch('bot.initialize_runtime'), patch('bot.TOKEN', 'synthetic'),
+              patch('bot.ApplicationBuilder', return_value=builder),
+              patch('bot.register_automatic_daily_brief')):
+            with self.assertRaises(unknown_error):
+                bot.main()
+        self.assertEqual(
+            self.stream.getvalue(),
+            'INFO CRM bot starting\nINFO Polling starting\n'
+            'INFO Telegram initialization succeeded\n'
+            'ERROR Startup or polling failed; details suppressed\n'
+            'ERROR Lifecycle failure stage=polling_after_init exception=Other context=Conflict\n'
+            'INFO CRM bot stopped\n',
+        )
 
     async def test_rejection_categories_are_safe_and_do_not_invoke_callback(self):
         callback = AsyncMock()
@@ -216,12 +254,13 @@ class LoggingTest(unittest.IsolatedAsyncioTestCase):
               patch('bot.ApplicationBuilder', return_value=builder),
               patch('bot.register_automatic_daily_brief')):
             bot.main()
-        builder.token.return_value.post_init.assert_called_once_with(bot.telegram_initialized)
+        builder.token.return_value.post_init.assert_called_once()
         self.assertNotIn('Telegram initialization succeeded', self.stream.getvalue())
         self.stream.seek(0)
         self.stream.truncate()
         # Simulate PTB's callback after successful initialize; no Telegram methods invoked.
-        await bot.telegram_initialized(app)
+        callback = builder.token.return_value.post_init.call_args.args[0]
+        await callback(app)
         self.assertEqual(self.stream.getvalue(), 'INFO Telegram initialization succeeded\n')
         app.initialize.assert_not_called()
         app.bot.get_me.assert_not_called()
@@ -243,4 +282,5 @@ class LoggingTest(unittest.IsolatedAsyncioTestCase):
                     bot.main()
             self.assertEqual(self.stream.getvalue(),
                              'INFO CRM bot starting\nERROR Telegram error: ' + category +
-                             '\nINFO CRM bot stopped\n')
+                             '\nERROR Lifecycle failure stage=runtime_setup exception=' +
+                             type(error).__name__ + '\nINFO CRM bot stopped\n')
